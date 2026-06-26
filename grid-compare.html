@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compare</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #061621; overflow: hidden; width: 100vw; height: 100vh; }
+canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; display: block; }
+#clip { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; overflow: hidden; }
+#cb { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; display: block; }
+#dragger {
+  position: absolute; top: 0; width: 2px; height: 100vh;
+  background: rgba(255,255,255,0.25); cursor: ew-resize; z-index: 10;
+  transform: translateX(-50%);
+}
+#dragger::after {
+  content: '';
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.3);
+}
+#dragger::before {
+  content: '◀ ▶';
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 9px; color: rgba(255,255,255,0.5);
+  letter-spacing: 2px; z-index: 1;
+}
+label {
+  position: fixed; bottom: 16px; font-family: sans-serif; font-size: 11px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.3);
+  pointer-events: none; z-index: 20;
+}
+#label-a { left: 24px; }
+#label-b { right: 24px; }
+</style>
+</head>
+<body>
+<canvas id="ca"></canvas>
+<div id="clip">
+  <canvas id="cb"></canvas>
+</div>
+<div id="dragger"></div>
+<label id="label-a">Without magnetism</label>
+<label id="label-b">With magnetism</label>
+<script>
+const CELL = 12, GAP = 20, STEP = CELL + GAP, RADIUS = 400;
+
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function smoothstep(t) { return t * t * (3 - 2 * t); }
+function lerpColor(a, b, t) {
+  const ah = parseInt(a.slice(1), 16), bh = parseInt(b.slice(1), 16);
+  const ar = (ah >> 16) & 0xff, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
+  const br = (bh >> 16) & 0xff, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
+  return `rgb(${Math.round(ar+(br-ar)*t)},${Math.round(ag+(bg-ag)*t)},${Math.round(ab+(bb-ab)*t)})`;
+}
+
+function makeSim(canvasEl, useMagnet) {
+  const ctx = canvasEl.getContext('2d');
+  let W = window.innerWidth, H = window.innerHeight;
+  let particles = [];
+  let mouse = { x: -9999, y: -9999 };
+  let smoothMouse = { x: -9999, y: -9999 };
+  let last = performance.now();
+
+  canvasEl.width = W; canvasEl.height = H;
+
+  function init() {
+    particles = [];
+    const cols = Math.ceil(W / STEP) + 1;
+    for (let c = 0; c < cols; c++) {
+      const x = c * STEP + CELL / 2;
+      const count = Math.floor(rand(4, 10));
+      for (let i = 0; i < count; i++) {
+        particles.push({ x, originX: x, y: rand(-H, 0), speed: rand(60, 220),
+          angle: rand(0, Math.PI * 2), spin: rand(-2, 2), scale: 1, targetScale: 1 });
+      }
+    }
+  }
+
+  function draw(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    const ls = 1 - Math.pow(0.01, dt * 8);
+    smoothMouse.x += (mouse.x - smoothMouse.x) * ls;
+    smoothMouse.y += (mouse.y - smoothMouse.y) * ls;
+    ctx.clearRect(0, 0, W, H);
+    for (const p of particles) {
+      p.y += p.speed * dt;
+      p.angle += p.spin * dt;
+      if (p.y > H + CELL) { p.y = -CELL; p.speed = rand(60, 220); p.spin = rand(-2, 2); }
+      const dx = p.x - smoothMouse.x, dy = p.y - smoothMouse.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const influence = smoothstep(Math.max(0, 1 - dist / RADIUS));
+      if (useMagnet) {
+        const tx = p.originX + (smoothMouse.x - p.originX) * influence * 0.07;
+        p.x += (tx - p.x) * (1 - Math.pow(0.001, dt * 8));
+      }
+      p.targetScale = 1 + influence * 1.5;
+      p.scale += (p.targetScale - p.scale) * (1 - Math.pow(0.001, dt * 10));
+      const size = CELL * p.scale, half = size / 2;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.angle);
+      ctx.fillStyle = lerpColor('#14232D', '#1E2B32', influence);
+      ctx.beginPath();
+      ctx.roundRect(-half, -half, size, size, 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function setMouse(x, y) { mouse.x = x; mouse.y = y; }
+  function clearMouse() { mouse.x = -9999; mouse.y = -9999; }
+
+  window.addEventListener('resize', () => {
+    W = canvasEl.width = window.innerWidth;
+    H = canvasEl.height = window.innerHeight;
+    init();
+  });
+
+  init();
+  return { draw, setMouse, clearMouse };
+}
+
+const simA = makeSim(document.getElementById('ca'), false);
+const simB = makeSim(document.getElementById('cb'), true);
+
+// dragger
+const dragger = document.getElementById('dragger');
+const clip = document.getElementById('clip');
+let splitX = window.innerWidth / 2;
+
+function setSplit(x) {
+  splitX = Math.max(40, Math.min(window.innerWidth - 40, x));
+  dragger.style.left = splitX + 'px';
+  clip.style.clipPath = `inset(0 0 0 ${splitX}px)`;
+}
+setSplit(splitX);
+
+let dragging = false;
+dragger.addEventListener('mousedown', e => { dragging = true; e.preventDefault(); });
+window.addEventListener('mousemove', e => {
+  if (dragging) setSplit(e.clientX);
+  simA.setMouse(e.clientX, e.clientY);
+  simB.setMouse(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', () => { dragging = false; });
+window.addEventListener('mouseleave', () => { simA.clearMouse(); simB.clearMouse(); });
+
+function loop(now) {
+  simA.draw(now);
+  simB.draw(now);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
