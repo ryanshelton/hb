@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grid Background</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #061621; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const CELL = 12, GAP = 20, STEP = CELL + GAP, RADIUS = 400;
+
+// smoothed mouse position
+let mouse = { x: -9999, y: -9999 };
+let smoothMouse = { x: -9999, y: -9999 };
+
+let W, H, particles = [];
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  init();
+}
+
+function rand(min, max) { return Math.random() * (max - min) + min; }
+
+// smoothstep for a softer influence falloff
+function smoothstep(t) { return t * t * (3 - 2 * t); }
+
+// lerp between two hex colours by t
+function lerpColor(a, b, t) {
+  const ah = parseInt(a.slice(1), 16);
+  const bh = parseInt(b.slice(1), 16);
+  const ar = (ah >> 16) & 0xff, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
+  const br = (bh >> 16) & 0xff, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+function init() {
+  particles = [];
+  const cols = Math.ceil(W / STEP) + 1;
+  for (let c = 0; c < cols; c++) {
+    const x = c * STEP + CELL / 2;
+    const count = Math.floor(rand(4, 10));
+    for (let i = 0; i < count; i++) {
+      particles.push({
+        x,
+        originX: x,
+        y: rand(-H, 0),
+        speed: rand(60, 220),
+        angle: rand(0, Math.PI * 2),
+        spin: rand(-2, 2),
+        scale: 1,
+        targetScale: 1,
+      });
+    }
+  }
+}
+
+let last = performance.now();
+
+function draw(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+
+  // smooth mouse tracking
+  const lerpSpeed = 1 - Math.pow(0.01, dt * 8);
+  smoothMouse.x += (mouse.x - smoothMouse.x) * lerpSpeed;
+  smoothMouse.y += (mouse.y - smoothMouse.y) * lerpSpeed;
+
+  ctx.clearRect(0, 0, W, H);
+
+  for (const p of particles) {
+    p.y += p.speed * dt;
+    p.angle += p.spin * dt;
+
+    if (p.y > H + CELL) {
+      p.y = -CELL;
+      p.speed = rand(60, 220);
+      p.spin = rand(-2, 2);
+    }
+
+    const dx = p.x - smoothMouse.x;
+    const dy = p.y - smoothMouse.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const raw = Math.max(0, 1 - dist / RADIUS);
+    const influence = smoothstep(raw);
+
+    // magnetic pull toward cursor, restore to origin column when outside radius
+    const pullStrength = influence * 12;
+    const targetX = p.originX + (smoothMouse.x - p.originX) * influence * 0.07;
+    p.x += (targetX - p.x) * (1 - Math.pow(0.001, dt * 8));
+
+    // lerp scale toward target for smooth grow/shrink
+    p.targetScale = 1 + influence * 1.5;
+    p.scale += (p.targetScale - p.scale) * (1 - Math.pow(0.001, dt * 10));
+
+    const size = CELL * p.scale;
+    const half = size / 2;
+    const col = lerpColor('#14232D', '#1E2B32', influence);
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.angle);
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.roundRect(-half, -half, size, size, 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  requestAnimationFrame(draw);
+}
+
+canvas.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener('mouseleave', () => { mouse.x = -9999; mouse.y = -9999; });
+window.addEventListener('resize', resize);
+resize();
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
